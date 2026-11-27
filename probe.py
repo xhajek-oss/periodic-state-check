@@ -178,6 +178,28 @@ def main():
                 except Exception:
                     failed += 1
         print(f"discovery_checked={checked} discovery_failed={failed} discovery_keyword_matches={matched} discovery_unique_booking_targets={len(booking_targets)}")
+        sample_parts = sample.path.strip("/").split("/")
+        for i, target in enumerate(sorted(booking_targets), 1):
+            parts = urlsplit(target).path.strip("/").split("/")
+            prefix = 0
+            for a, b in zip(parts, sample_parts):
+                if a != b:
+                    break
+                prefix += 1
+            print(f"booking_target={i} same_sample_path={int(parts == sample_parts)} shared_path_segments={prefix} path_depth={len(parts)} numeric_segments={sum(p.isdecimal() for p in parts)}")
+            try:
+                landing, final, code, seconds = fetch(target)
+                final_parts = urlsplit(final).path.strip("/").split("/")
+                print(f"booking_landing={i} status={code} same_origin={int(urlsplit(final).netloc == booking_origin)} same_sample_path={int(final_parts == sample_parts)} scripts={landing.scripts} controls={landing.controls}")
+            except Exception:
+                print(f"booking_landing={i} fetch_failed")
+        month_links = set()
+        for href, label in parser.links:
+            if re.search(r"leden|únor|březen|duben|květen|červen|červenec|srpen|září|říjen|listopad|prosinec|january|february|march|april|may|june|july|august|september|october|november|december", label, re.I):
+                u = urlsplit(urljoin(base, href))
+                if u.scheme == "https" and u.netloc == origin:
+                    month_links.add(u.geturl())
+        print(f"month_label_links={len(month_links)}")
         if not candidates and ranked:
             for i, url in enumerate(sorted(ranked[0])[:2], 1):
                 try:
