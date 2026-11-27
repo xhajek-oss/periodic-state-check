@@ -292,8 +292,13 @@ async def main():
                         if not ident or not re.search(r"free|available|voln", cls, re.I) or re.search(r"occupied|reserved|sold|obsazen|prodan|unavailable", cls, re.I):
                             return
                         self.ids.add(ident)
-                        label = unescape(" ".join(v or "" for k,v in attrs if k.startswith("data-")))
-                        label = re.sub(r"<[^>]*>", " ", label)
+                        labels = []
+                        for k,v in attrs:
+                            if k.startswith("data-"):
+                                p = LabelText()
+                                p.feed(unescape(v or ""))
+                                labels.extend(p.parts)
+                        label = " ".join(labels)
                         row = re.search(r"(?:řad[ayěu]?|row)\s*[:.\-]?\s*(\d+)", label, re.I)
                         if re.search(r"přízemí|prizemi|stalls|ground floor", label, re.I) and not re.search(r"balk[oó]n|balcony|l[oó]ž|box|přístav", label, re.I):
                             self.ground.add(ident)
@@ -316,7 +321,38 @@ async def main():
                         h["Cookie"] = cookie_header
                     if mode == "fresh_session":
                         with opener.open(urllib.request.Request(config["sample_url"], headers={k:v for k,v in h.items() if k in ("user-agent","accept-language")}), timeout=12) as initial:
-                            initial.read(2000000)
+                            raw = initial.read(2000000).decode("utf-8",errors="replace")
+                            from urllib.parse import unquote
+                            from html import unescape
+                            normalized = unescape(unquote(raw)).replace("\\/", "/")
+                            path = urlsplit(url).path
+                            segments = path.strip("/").split("/")
+                            print(f"endpoint_discovery full_path={int(path in normalized)} tail_path={int('/'.join(segments[-2:]) in normalized)} last_segment={int(segments[-1] in normalized)} query_present={int(bool(urlsplit(url).query))}")
+                            class Scripts(HTMLParser):
+                                def __init__(self):
+                                    super().__init__()
+                                    self.urls = []
+                                def handle_starttag(self, tag, attrs):
+                                    if tag == "script":
+                                        src = dict(attrs).get("src")
+                                        if src:
+                                            self.urls.append(urljoin(config["sample_url"],src))
+                            scripts = Scripts()
+                            scripts.feed(raw)
+                            hits = checked = 0
+                            for script in dict.fromkeys(scripts.urls):
+                                if checked >= 20:
+                                    break
+                                if urlsplit(script).scheme != "https" or urlsplit(script).netloc != sample.netloc:
+                                    continue
+                                try:
+                                    with opener.open(script, timeout=8) as js:
+                                        source = js.read(1000000).decode("utf-8",errors="replace")
+                                    checked += 1
+                                    hits += int('/'.join(segments[-2:]) in source or path in source)
+                                except Exception:
+                                    continue
+                            print(f"endpoint_scripts_checked={checked} endpoint_scripts_hits={hits}")
                     req = urllib.request.Request(url, headers=h)
                     with opener.open(req, timeout=12) as res:
                         body = res.read(2000001)
