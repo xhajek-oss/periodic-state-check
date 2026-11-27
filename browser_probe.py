@@ -102,6 +102,29 @@ async def main():
                     row_hint:Number(/row|rada/i.test(g[0].getAttribute('class')))
                 }));
             }""")
+            seats = await frame.evaluate("""() => {
+                const nodes = Array.from(document.querySelectorAll('[id][title][class]')).filter(e =>
+                    !e.children.length && /free|available|voln/i.test(e.getAttribute('class')) &&
+                    !/occupied|reserved|sold|obsazen|prodan|unavailable/i.test(e.getAttribute('class')));
+                return nodes.map(e => ({id:e.id, title:e.title}));
+            }""")
+            rows = Counter()
+            pairs = set()
+            parsed = 0
+            for seat in seats:
+                title = seat["title"]
+                row = re.search(r"(?:řad[ayěu]?|row)\\s*[:.\\-]?\\s*(\\d+)", title, re.I)
+                number = re.search(r"(?:sedadlo|místo|seat)\\s*[:.\\-]?\\s*(\\d+)", title, re.I)
+                if row:
+                    n = int(row.group(1))
+                    rows[n] += 1
+                    if number:
+                        parsed += 1
+                        pairs.add((n, int(number.group(1))))
+            limit = int(config.get("seats", {}).get("max_row", 5))
+            print(f"free_candidates={len(seats)} unique_ids={len({s['id'] for s in seats})} parsed_rows={sum(rows.values())} parsed_seat_pairs={parsed}")
+            print(f"front_row_candidates={sum(v for k,v in rows.items() if 1 <= k <= limit)} adjacent_number_pairs={sum(1 for r,n in pairs if 1 <= r <= limit and (r,n+1) in pairs)}")
+            print("front_row_counts=" + json.dumps({r:rows[r] for r in range(1,limit+1)}))
             for i, group in enumerate(structure, 1):
                 print(f"element_group={i} " + json.dumps(group, sort_keys=True))
         page.remove_listener("response", on_response)
