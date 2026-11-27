@@ -42,61 +42,44 @@ async def main():
         def on_response(response):
             pending.append(asyncio.create_task(inspect(response)))
         page.on("response", on_response)
-        await page.goto(config["target_url"], wait_until="domcontentloaded", timeout=25000)
-        await page.wait_for_timeout(3000)
-        labels = config.get("link_labels", ["koupit", "vstupenky", "buy", "tickets"])
-        candidates = await page.locator("a[href], button, input[type=button]").evaluate_all("""els => els.map(e => ({
-            label: [e.innerText,e.title,e.getAttribute('aria-label'),e.value].filter(Boolean).join(' '),
-            url: e.tagName === 'A' ? e.href : '',
-            kind: e.tagName
-        }))""")
-        matching = [x for x in candidates if any(w.casefold() in x["label"].casefold() for w in labels)]
-        print(f"rendered_purchase_links={sum(bool(x['url']) for x in matching)} rendered_purchase_controls={sum(not x['url'] for x in matching)}")
-        program_targets = {x["url"] for x in matching if x["url"]}
-        detail_targets = set()
-        print(f"program_frames={len(page.frames)}")
-        links = await page.locator("a[href]").evaluate_all("(els) => els.map(e => ({url:e.href,label:e.innerText}))")
         from urllib.parse import urlsplit
-        origin = urlsplit(page.url).netloc
-        groups = {}
-        for link in links:
-            u = urlsplit(link["url"])
-            parts = u.path.strip("/").split("/")
-            if u.scheme == "https" and u.netloc == origin and not u.query and not u.fragment and len(parts) >= 2 and link["label"].strip():
-                groups.setdefault(tuple(parts[:-1]), set()).add(link["url"])
-        if groups:
-            for i, url in enumerate(sorted(max(groups.values(), key=len))[:2], 1):
-                try:
-                    await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-                    await page.wait_for_timeout(3000)
-                    print(f"detail_sample={i} frames={len(page.frames)}")
-                    for frame in page.frames:
-                        items = await frame.locator("a[href], button, input[type=button]").evaluate_all("""els => els.map(e => ({
-                            label: [e.innerText,e.title,e.getAttribute('aria-label'),e.value].filter(Boolean).join(' '),
-                            kind: e.tagName,
-                            url: e.tagName === 'A' ? e.href : ''
-                        }))""")
-                        matched = [x for x in items if any(w.casefold() in x["label"].casefold() for w in labels)]
-                        detail_targets.update(x["url"] for x in matched if x["url"])
-                        print(f"frame_controls={len(items)} purchase_matches={len(matched)}")
-                except Exception:
-                    print(f"detail_sample={i} failed")
-        print(f"unique_purchase_targets={len(program_targets | detail_targets)} shared_targets={len(program_targets & detail_targets)}")
-        targets = sorted(u for u in program_targets | detail_targets if urlsplit(u).scheme == "https")
-        if config.get("sample_url"):
-            if urlsplit(config["sample_url"]).scheme != "https":
-                raise ValueError()
-            targets = [config["sample_url"]]
-            print("configured_sample=1")
-        for i, target in enumerate(targets[:2], 1):
-            try:
-                await page.goto(target, wait_until="domcontentloaded", timeout=20000)
-                await page.wait_for_timeout(3000)
-                print(f"purchase_sample={i} frames={len(page.frames)} external_origin={int(urlsplit(page.url).netloc != origin)}")
-                for frame in page.frames:
-                    print(f"purchase_frame_controls={await frame.locator('a,button,input').count()} seat_attribute_hints={await frame.locator('[data-seat],[data-row],[data-seat-id]').count()}")
-            except Exception:
-                print(f"purchase_sample={i} failed")
+        from probe import fetch
+        target = config["sample_url"]
+        if urlsplit(target).scheme != "https":
+            raise ValueError()
+        import re
+        try:
+            raw, _, status, seconds = await asyncio.to_thread(fetch, target)
+            print(f"http_status={status} http_seconds={seconds:.2f}")
+            print(f"http_scripts={raw.scripts} http_controls={raw.controls}")
+            print(f"http_seat_hints={sum(bool(re.search(r'seat|sedadl|hledi|availability', x, re.I)) for x in raw.parts)}")
+        except Exception:
+            print("http_sample_failed")
+        response = await page.goto(target, wait_until="domcontentloaded", timeout=25000)
+        await page.wait_for_timeout(5000)
+        print(f"browser_status={response.status if response else 0} frames={len(page.frames)}")
+        for frame in page.frames:
+            stats = await frame.evaluate("""() => {
+                const all = Array.from(document.querySelectorAll('*'));
+                const text = document.body?.innerText || '';
+                const hints = /seat|sedadl|hledi|availability|occupied|free|reserved/i;
+                const globals = Object.keys(window).filter(k => hints.test(k));
+                return {
+                    elements: all.length,
+                    svg: document.querySelectorAll('svg').length,
+                    svg_shapes: document.querySelectorAll('svg circle,svg rect,svg path,svg use').length,
+                    canvas: document.querySelectorAll('canvas').length,
+                    images: document.images.length,
+                    class_hints: all.filter(e => hints.test(e.getAttribute('class') || '')).length,
+                    attribute_hints: all.filter(e => Array.from(e.attributes).some(a => hints.test(a.name))).length,
+                    global_hints: globals.length,
+                    row_text: Number(/\\b(row|řada|řady)\\b/i.test(text)),
+                    seat_text: Number(/seat|sedadl|hledi/i.test(text)),
+                    error_text: Number(/expired|invalid|not found|chyba|neplatn|vypršel/i.test(text)),
+                    login_text: Number(/sign in|log in|přihlásit/i.test(text))
+                };
+            }""")
+            print("rendered_stats=" + json.dumps(stats, sort_keys=True))
         page.remove_listener("response", on_response)
         if pending:
             _, unfinished = await asyncio.wait(pending, timeout=5)
