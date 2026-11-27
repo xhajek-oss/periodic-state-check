@@ -66,6 +66,16 @@ async def main():
     async with async_playwright() as p:
         browser = await p.chromium.launch()
         page = await browser.new_page()
+        cdp = await page.context.new_cdp_session(page)
+        await cdp.send("Network.enable")
+        initiators = {}
+        def capture(event):
+            if event.get("type") in ("XHR","Fetch"):
+                init = event.get("initiator",{})
+                frames = init.get("stack",{}).get("callFrames",[])
+                initiators[event["request"]["url"]] = (init.get("type","unknown"), len(frames), sum(bool(f.get("url")) for f in frames))
+        cdp.on("Network.requestWillBeSent", capture)
+        dom_attrs = {}
         def on_response(response):
             pending.append(asyncio.create_task(inspect(response)))
         page.on("response", on_response)
@@ -171,6 +181,7 @@ async def main():
                     parents:[e.parentElement,e.parentElement?.parentElement].filter(Boolean).map(p=>({id:p.id, title:p.title, numeric:/^\\s*\\d+\\s*$/.test(p.textContent)}))
                 }));
             }""")
+            dom_attrs.update({s["id"]:{a["name"]:a["value"] for a in s["attrs"]} for s in seats})
             shapes = Counter()
             fields = {}
             for seat in seats:
@@ -285,6 +296,7 @@ async def main():
                         self.ids = set()
                         self.ground = set()
                         self.front = set()
+                        self.compare = Counter()
                     def handle_starttag(self, tag, attrs):
                         a = dict(attrs)
                         cls = a.get("class") or ""
@@ -292,6 +304,19 @@ async def main():
                         if not ident or not re.search(r"free|available|voln", cls, re.I) or re.search(r"occupied|reserved|sold|obsazen|prodan|unavailable", cls, re.I):
                             return
                         self.ids.add(ident)
+                        raw_attrs = {k:v or "" for k,v in attrs if k.startswith("data-")}
+                        if ident in dom_attrs:
+                            self.compare["matched_ids"] += 1
+                            for k,v in dom_attrs[ident].items():
+                                self.compare["dom_fields"] += 1
+                                if k in raw_attrs:
+                                    self.compare["shared_fields"] += 1
+                                    self.compare["equal_fields"] += int(raw_attrs[k] == v)
+                                if re.search(r"řad|row|přízemí|ground floor", unescape(v), re.I):
+                                    self.compare["dom_label_fields"] += 1
+                                    self.compare["raw_label_fields"] += int(bool(re.search(r"řad|row|přízemí|ground floor", unescape(raw_attrs.get(k,"")), re.I)))
+                            self.compare["raw_fields"] += len(raw_attrs)
+                            self.compare["raw_entity_fields"] += sum("&" in v for v in raw_attrs.values())
                         labels = []
                         for k,v in attrs:
                             if k.startswith("data-"):
@@ -360,15 +385,19 @@ async def main():
                             raise ValueError()
                         parser = Seats()
                         parser.feed(body.decode("utf-8",errors="replace"))
-                        return res.status, len(body), len(parser.ids), len(parser.ground), len(parser.front), time.monotonic()-t
+                        return res.status, len(body), len(parser.ids), len(parser.ground), len(parser.front), time.monotonic()-t, dict(parser.compare)
                 for mode in ("headers_only", "browser_session", "fresh_session"):
                     try:
-                        status, size, free, ground, front, elapsed = await asyncio.to_thread(replay, mode)
+                        status, size, free, ground, front, elapsed, comparison = await asyncio.to_thread(replay, mode)
+                        print("attribute_comparison mode="+mode+" "+json.dumps(comparison,sort_keys=True))
                         print(f"direct_replay={i} mode={mode} status={status} bytes={size} free={free} ground={ground} front={front} seconds={elapsed:.2f}")
                     except Exception:
                         print(f"direct_replay={i} mode={mode} failed")
             except Exception:
                 print(f"direct_replay={i} failed")
+        for url in sorted(hall_reads):
+            kind, depth, sources = initiators.get(url, ("unknown",0,0))
+            print(f"endpoint_initiator type={kind} stack_depth={depth} source_frames={sources}")
         print(f"direct_candidates={len(hall_reads)}")
         await browser.close()
     for (stage, idx, method, status, kind), n in sorted(network.items()):
