@@ -76,6 +76,7 @@ async def main():
                 initiators[event["request"]["url"]] = (init.get("type","unknown"), len(frames), sum(bool(f.get("url")) for f in frames))
         cdp.on("Network.requestWillBeSent", capture)
         dom_attrs = {}
+        seat_map = {}
         def on_response(response):
             pending.append(asyncio.create_task(inspect(response)))
         page.on("response", on_response)
@@ -260,6 +261,8 @@ async def main():
                 elif re.search(r"přízemí|prizemi|stalls|ground floor", title, re.I):
                     sector = "ground"
                 sectors[sector] += 1
+                if row and number and sector != "unknown":
+                    seat_map[seat["id"]] = (sector, int(row.group(1)), int(number.group(1)))
                 if row:
                     n = int(row.group(1))
                     rows[n] += 1
@@ -385,6 +388,10 @@ async def main():
                             raise ValueError()
                         parser = Seats()
                         parser.feed(body.decode("utf-8",errors="replace"))
+                        mapped = parser.ids.intersection(seat_map)
+                        ground = {i for i in mapped if seat_map[i][0] == "ground"}
+                        front = {i for i in ground if 1 <= seat_map[i][1] <= int(config.get("seats",{}).get("max_row",5))}
+                        parser.compare.update({"hybrid_mapped":len(mapped),"hybrid_unknown":len(parser.ids-mapped),"hybrid_ground":len(ground),"hybrid_front":len(front),"hybrid_valid":int(bool(parser.ids) and parser.ids == set(seat_map))})
                         return res.status, len(body), len(parser.ids), len(parser.ground), len(parser.front), time.monotonic()-t, dict(parser.compare)
                 for mode in ("headers_only", "browser_session", "fresh_session"):
                     try:
@@ -395,6 +402,13 @@ async def main():
                         print(f"direct_replay={i} mode={mode} failed")
             except Exception:
                 print(f"direct_replay={i} failed")
+        print(f"hybrid_reference_size={len(seat_map)}")
+        # Inspect whether labels are present on non-free seats as well.
+        coverage = await page.evaluate("""() => {
+            const nodes = [...document.querySelectorAll('[id][class]')].filter(e=>!e.children.length && /occupied|reserved|sold|obsazen|prodan/i.test(e.getAttribute('class')));
+            return {occupied:nodes.length, with_data:nodes.filter(e=>[...e.attributes].some(a=>a.name.startsWith('data-'))).length, with_label:nodes.filter(e=>[...e.attributes].some(a=>a.name.startsWith('data-') && /řad|row|přízemí|balcony/i.test(a.value))).length};
+        }""")
+        print("hybrid_occupied_coverage="+json.dumps(coverage,sort_keys=True))
         for url in sorted(hall_reads):
             kind, depth, sources = initiators.get(url, ("unknown",0,0))
             print(f"endpoint_initiator type={kind} stack_depth={depth} source_frames={sources}")
