@@ -127,6 +127,48 @@ async def main():
             for i, values in enumerate(fields.values(), 1):
                 print(f"data_field={i} present={len(values)} distinct={len(set(values))} numeric={sum(v.isdecimal() for v in values)} json_like={sum(v.startswith(('{','[')) for v in values)}")
             print(f"parent_ids={sum(any(p['id'] for p in s['parents']) for s in seats)} parent_titles={sum(any(p['title'] for p in s['parents']) for s in seats)}")
+            from html import unescape
+            from html.parser import HTMLParser
+            class LabelText(HTMLParser):
+                def __init__(self):
+                    super().__init__()
+                    self.parts = []
+                def handle_data(self, data):
+                    self.parts.append(data)
+            for i, values in enumerate(fields.values(), 1):
+                if len(set(values)) < 2:
+                    continue
+                shapes = Counter()
+                row_hits = seat_hits = 0
+                for value in values:
+                    value = unescape(value)
+                    parser = LabelText()
+                    parser.feed(value)
+                    plain = " ".join(parser.parts)
+                    row_hits += int(bool(re.search(r"řad|row", plain, re.I)))
+                    seat_hits += int(bool(re.search(r"sedadl|místo|seat", plain, re.I)))
+                    shape = re.sub(r"\d+", "N", plain)
+                    shape = re.sub(r"[^\W\d_]+", "W", shape)
+                    shape = re.sub(r"[^NW\s:;,./()|+-]", "?", shape)
+                    shapes[shape[:120]] += 1
+                print(f"field_detail={i} row_hints={row_hits} seat_hints={seat_hits}")
+                for shape, count in shapes.most_common(3):
+                    print(f"field_shape={i} count={count} pattern={json.dumps(shape)}")
+            globals_stats = await frame.evaluate("""() => {
+                const hints = /seat|sedadl|hledi|availability|occupied|free|reserved/i;
+                return Object.keys(window).filter(k=>hints.test(k)).slice(0,30).map(k=>{
+                    const d = Object.getOwnPropertyDescriptor(window,k);
+                    const v = d && 'value' in d ? d.value : undefined;
+                    const sample = Array.isArray(v) ? v.slice(0,20) : [v];
+                    const keys = new Set();
+                    for (const x of sample) if(x && typeof x==='object') for(const a of Object.keys(x).slice(0,100)) keys.add(a);
+                    return {kind:Array.isArray(v)?'array':typeof v, size:Array.isArray(v)?v.length:keys.size,
+                        row_keys:[...keys].filter(k=>/row|rada|řad/i.test(k)).length,
+                        seat_keys:[...keys].filter(k=>/seat|sedadl|place/i.test(k)).length};
+                });
+            }""")
+            for i, item in enumerate(globals_stats, 1):
+                print(f"global_group={i} " + json.dumps(item, sort_keys=True))
             rows = Counter()
             pairs = set()
             parsed = 0
