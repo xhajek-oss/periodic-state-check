@@ -44,6 +44,37 @@ async def main():
         page.on("response", on_response)
         from urllib.parse import urlsplit
         from probe import fetch
+        from urllib.parse import urljoin
+        program, base, _, _ = await asyncio.to_thread(fetch, config["target_url"])
+        groups = {}
+        for href, label in program.links:
+            u = urlsplit(urljoin(base, href))
+            parts = u.path.strip("/").split("/")
+            if u.scheme == "https" and u.netloc == urlsplit(base).netloc and not u.query and not u.fragment and len(parts)>1 and label.strip():
+                groups.setdefault(tuple(parts[:-1]), set()).add(u.geturl())
+        sample = urlsplit(config["sample_url"])
+        import re
+        targets = set()
+        if groups:
+            for url in sorted(max(groups.values(), key=len))[:40]:
+                detail, detail_base, _, _ = await asyncio.to_thread(fetch, url)
+                if not any(re.search(r"\b"+re.escape(w)+r"\b", " ".join(detail.parts), re.I) for w in config["keywords"]):
+                    continue
+                values = [h for h,_ in detail.links] + detail.embed_urls
+                values += [v for a in detail.control_attrs + detail.forms for v in a.values() if isinstance(v,str)]
+                for v in values:
+                    u = urlsplit(urljoin(detail_base,v))
+                    if u.scheme == "https" and u.netloc == sample.netloc:
+                        targets.add(u.geturl())
+        print(f"landing_targets={len(targets)}")
+        for landing in sorted(targets)[:3]:
+            response = await page.goto(landing, wait_until="domcontentloaded", timeout=25000)
+            await page.wait_for_timeout(3000)
+            links = await page.locator("a[href]").evaluate_all("(nodes)=>nodes.map(e=>e.href)")
+            hall_prefix = sample.path.strip("/").split("/")[:3]
+            hall_links = {u for u in links if urlsplit(u).netloc == sample.netloc and urlsplit(u).path.strip("/").split("/")[:3] == hall_prefix}
+            print(f"landing_status={response.status if response else 0} rendered_links={len(links)} hall_links={len(hall_links)}")
+            print(f"landing_controls={await page.locator('button,input').count()} landing_frames={len(page.frames)}")
         target = config["sample_url"]
         if urlsplit(target).scheme != "https":
             raise ValueError()
