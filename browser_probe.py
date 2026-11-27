@@ -52,6 +52,7 @@ async def main():
             raw, _, status, seconds = await asyncio.to_thread(fetch, target)
             print(f"http_status={status} http_seconds={seconds:.2f}")
             print(f"http_scripts={raw.scripts} http_controls={raw.controls}")
+            print(f"http_class_attributes={sum(a == 'class' for a in raw.attrs)}")
             print(f"http_seat_hints={sum(bool(re.search(r'seat|sedadl|hledi|availability', x, re.I)) for x in raw.parts)}")
         except Exception:
             print("http_sample_failed")
@@ -80,6 +81,29 @@ async def main():
                 };
             }""")
             print("rendered_stats=" + json.dumps(stats, sort_keys=True))
+            structure = await frame.evaluate("""() => {
+                const hints = /seat|sedadl|hledi|availability|occupied|free|reserved/i;
+                const nodes = Array.from(document.querySelectorAll('[class]')).filter(e => hints.test(e.className?.baseVal || e.getAttribute('class') || ''));
+                const groups = new Map();
+                for (const e of nodes) {
+                    const key = e.tagName + '|' + e.getAttribute('class');
+                    if (!groups.has(key)) groups.set(key, []);
+                    groups.get(key).push(e);
+                }
+                return Array.from(groups.values()).sort((a,b)=>b.length-a.length).slice(0,15).map(g => ({
+                    count:g.length,
+                    leaf:g.filter(e=>!e.children.length).length,
+                    titled:g.filter(e=>e.hasAttribute('title')).length,
+                    identified:g.filter(e=>e.id).length,
+                    numeric_text:g.filter(e=>/^\\s*\\d+\\s*$/.test(e.textContent)).length,
+                    data_attributes:g.filter(e=>Array.from(e.attributes).some(a=>a.name.startsWith('data-'))).length,
+                    free_hint:Number(/free|available|voln/i.test(g[0].getAttribute('class'))),
+                    occupied_hint:Number(/occupied|reserved|sold|obsazen|prodan/i.test(g[0].getAttribute('class'))),
+                    row_hint:Number(/row|rada/i.test(g[0].getAttribute('class')))
+                }));
+            }""")
+            for i, group in enumerate(structure, 1):
+                print(f"element_group={i} " + json.dumps(group, sort_keys=True))
         page.remove_listener("response", on_response)
         if pending:
             _, unfinished = await asyncio.wait(pending, timeout=5)
