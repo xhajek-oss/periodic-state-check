@@ -16,12 +16,15 @@ class Probe(HTMLParser):
         self.attrs = []
         self.controls = 0
         self.embedded = 0
+        self.embed_urls = []
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
         if tag in ("button", "input"):
             self.controls += 1
         if tag in ("iframe", "object", "embed"):
             self.embedded += 1
+            if tag == 'iframe' and a.get('src'):
+                self.embed_urls.append(a['src'])
         self.attrs.extend(k for k, v in attrs)
         if tag == "a":
             self.anchor = [a.get("href") or "", a.get("title") or ""]
@@ -89,9 +92,17 @@ def main():
         if not candidates and ranked:
             for i, url in enumerate(sorted(ranked[0])[:2], 1):
                 try:
-                    detail, _, code, seconds = fetch(url)
+                    detail, detail_base, code, seconds = fetch(url)
                     found = sum(any(w.casefold() in label.casefold() for w in labels) for _, label in detail.links)
                     print(f"detail_sample={i} status={code} seconds={seconds:.2f} links={len(detail.links)} purchase_labels={found} controls={detail.controls} embedded={detail.embedded}")
+                    for src in detail.embed_urls[:1]:
+                        try:
+                            target = urljoin(detail_base, src)
+                            frame, _, frame_code, frame_seconds = fetch(target)
+                            hints = sum(bool(re.search(r"seat|row|place|available", a, re.I)) for a in frame.attrs)
+                            print(f"frame_sample={i} status={frame_code} seconds={frame_seconds:.2f} scripts={frame.scripts} links={len(frame.links)} attribute_hints={hints}")
+                        except Exception:
+                            print(f"frame_sample={i} fetch_failed")
                 except Exception:
                     print(f"detail_sample={i} fetch_failed")
         for i, url in enumerate(candidates[:2], 1):
