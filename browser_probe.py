@@ -12,6 +12,7 @@ async def main():
     pending = []
     network = Counter()
     endpoint_ids = {}
+    hall_reads = set()
     phase = "landing"
     async def inspect(response):
         try:
@@ -32,6 +33,8 @@ async def main():
                             import re
                             raw = body.decode("utf-8", errors="replace")
                             hints = [int(bool(re.search(p, raw, re.I))) for p in ("seat|sedadl", "row|řad", "available|occupied|free|reserved", "event|performance|termín")]
+                            if phase == "hall" and all(hints[:3]) and u.netloc == urlsplit(config["sample_url"]).netloc:
+                                hall_reads.add(response.url)
                             print(f"endpoint_body={idx} bytes={len(body)} seat_hint={hints[0]} row_hint={hints[1]} status_hint={hints[2]} event_hint={hints[3]}")
                     except Exception:
                         counts["body_errors"] += 1
@@ -268,6 +271,47 @@ async def main():
             for task in unfinished:
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
+        # Replay only observed same-origin GET URLs, without browser cookies.
+        for i, url in enumerate(sorted(hall_reads)[:3], 1):
+            try:
+                import urllib.request
+                from html.parser import HTMLParser
+                from html import unescape
+                class Seats(HTMLParser):
+                    def __init__(self):
+                        super().__init__()
+                        self.ids = set()
+                        self.ground = set()
+                        self.front = set()
+                    def handle_starttag(self, tag, attrs):
+                        a = dict(attrs)
+                        cls = a.get("class") or ""
+                        ident = a.get("id")
+                        if not ident or not re.search(r"free|available|voln", cls, re.I) or re.search(r"occupied|reserved|sold|obsazen|prodan|unavailable", cls, re.I):
+                            return
+                        self.ids.add(ident)
+                        label = unescape(" ".join(v or "" for k,v in attrs if k.startswith("data-")))
+                        label = re.sub(r"<[^>]*>", " ", label)
+                        row = re.search(r"(?:řad[ayěu]?|row)\s*[:.\-]?\s*(\d+)", label, re.I)
+                        if re.search(r"přízemí|prizemi|stalls|ground floor", label, re.I) and not re.search(r"balk[oó]n|balcony|l[oó]ž|box|přístav", label, re.I):
+                            self.ground.add(ident)
+                            if row and 1 <= int(row.group(1)) <= int(config.get("seats",{}).get("max_row",5)):
+                                self.front.add(ident)
+                def replay():
+                    t = time.monotonic()
+                    req = urllib.request.Request(url, headers={"User-Agent":"ResourceMonitor/0.2"})
+                    with urllib.request.urlopen(req, timeout=12) as res:
+                        body = res.read(2000001)
+                        if len(body)>2000000 or urlsplit(res.geturl()).netloc != sample.netloc:
+                            raise ValueError()
+                        parser = Seats()
+                        parser.feed(body.decode("utf-8",errors="replace"))
+                        return res.status, len(body), len(parser.ids), len(parser.ground), len(parser.front), time.monotonic()-t
+                status, size, free, ground, front, elapsed = await asyncio.to_thread(replay)
+                print(f"direct_replay={i} status={status} bytes={size} free={free} ground={ground} front={front} seconds={elapsed:.2f}")
+            except Exception:
+                print(f"direct_replay={i} failed")
+        print(f"direct_candidates={len(hall_reads)}")
         await browser.close()
     for (stage, idx, method, status, kind), n in sorted(network.items()):
         print(f"network_endpoint={idx} phase={stage} method={method} status={status} kind={kind} count={n}")
