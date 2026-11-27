@@ -10,9 +10,31 @@ async def main():
     config = json.loads(os.environ["MONITOR_CONFIG"])
     counts = Counter()
     pending = []
+    network = Counter()
+    endpoint_ids = {}
+    phase = "landing"
     async def inspect(response):
         try:
             counts["responses"] += 1
+            from urllib.parse import urlsplit
+            req = response.request
+            if req.resource_type in ("xhr", "fetch"):
+                u = urlsplit(response.url)
+                key = (u.netloc, u.path)
+                idx = endpoint_ids.setdefault(key, len(endpoint_ids)+1)
+                mime = response.headers.get("content-type", "").lower()
+                kind = "json" if "json" in mime else "html" if "html" in mime else "other"
+                network[(phase, idx, req.method, response.status, kind)] += 1
+                if req.method == "GET" and response.status == 200:
+                    try:
+                        body = await response.body()
+                        if len(body) <= 2000000:
+                            import re
+                            raw = body.decode("utf-8", errors="replace")
+                            hints = [int(bool(re.search(p, raw, re.I))) for p in ("seat|sedadl", "row|řad", "available|occupied|free|reserved", "event|performance|termín")]
+                            print(f"endpoint_body={idx} bytes={len(body)} seat_hint={hints[0]} row_hint={hints[1]} status_hint={hints[2]} event_hint={hints[3]}")
+                    except Exception:
+                        counts["body_errors"] += 1
             if "json" not in response.headers.get("content-type", "").lower():
                 return
             counts["json_responses"] += 1
@@ -75,6 +97,7 @@ async def main():
             hall_links = {u for u in links if urlsplit(u).netloc == sample.netloc and urlsplit(u).path.strip("/").split("/")[:3] == hall_prefix}
             print(f"landing_status={response.status if response else 0} rendered_links={len(links)} hall_links={len(hall_links)}")
             print(f"landing_controls={await page.locator('button,input').count()} landing_frames={len(page.frames)}")
+        phase = "hall"
         target = config["sample_url"]
         if urlsplit(target).scheme != "https":
             raise ValueError()
@@ -246,6 +269,8 @@ async def main():
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
         await browser.close()
+    for (stage, idx, method, status, kind), n in sorted(network.items()):
+        print(f"network_endpoint={idx} phase={stage} method={method} status={status} kind={kind} count={n}")
     for key in sorted(counts):
         print(f"{key}={counts[key]}")
     print(f"total_seconds={time.monotonic()-start:.2f}")
