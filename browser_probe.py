@@ -83,6 +83,11 @@ async def main():
                     print(f"detail_sample={i} failed")
         print(f"unique_purchase_targets={len(program_targets | detail_targets)} shared_targets={len(program_targets & detail_targets)}")
         targets = sorted(u for u in program_targets | detail_targets if urlsplit(u).scheme == "https")
+        if config.get("sample_url"):
+            if urlsplit(config["sample_url"]).scheme != "https":
+                raise ValueError()
+            targets = [config["sample_url"]]
+            print("configured_sample=1")
         for i, target in enumerate(targets[:2], 1):
             try:
                 await page.goto(target, wait_until="domcontentloaded", timeout=20000)
