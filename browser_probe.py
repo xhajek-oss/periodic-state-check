@@ -13,6 +13,7 @@ async def main():
     network = Counter()
     endpoint_ids = {}
     hall_reads = set()
+    hall_headers = {}
     phase = "landing"
     async def inspect(response):
         try:
@@ -35,6 +36,7 @@ async def main():
                             hints = [int(bool(re.search(p, raw, re.I))) for p in ("seat|sedadl", "row|řad", "available|occupied|free|reserved", "event|performance|termín")]
                             if phase == "hall" and all(hints[:3]) and u.netloc == urlsplit(config["sample_url"]).netloc:
                                 hall_reads.add(response.url)
+                                hall_headers[response.url] = await req.all_headers()
                             print(f"endpoint_body={idx} bytes={len(body)} seat_hint={hints[0]} row_hint={hints[1]} status_hint={hints[2]} event_hint={hints[3]}")
                     except Exception:
                         counts["body_errors"] += 1
@@ -297,18 +299,38 @@ async def main():
                             self.ground.add(ident)
                             if row and 1 <= int(row.group(1)) <= int(config.get("seats",{}).get("max_row",5)):
                                 self.front.add(ident)
-                def replay():
+                from http.cookiejar import CookieJar
+                headers = {k:v for k,v in hall_headers.get(url,{}).items() if k.lower() in ("user-agent","accept","accept-language","referer","x-requested-with","origin")}
+                cookies = await page.context.cookies([url])
+                cookie_header = "; ".join(x["name"]+"="+x["value"] for x in cookies)
+                class SameOrigin(urllib.request.HTTPRedirectHandler):
+                    def redirect_request(self, req, fp, code, msg, headers, newurl):
+                        if urlsplit(newurl).scheme != "https" or urlsplit(newurl).netloc != sample.netloc:
+                            raise ValueError("redirect")
+                        return super().redirect_request(req, fp, code, msg, headers, newurl)
+                def replay(mode):
                     t = time.monotonic()
-                    req = urllib.request.Request(url, headers={"User-Agent":"ResourceMonitor/0.2"})
-                    with urllib.request.urlopen(req, timeout=12) as res:
+                    h = dict(headers)
+                    opener = urllib.request.build_opener(SameOrigin(), urllib.request.HTTPCookieProcessor(CookieJar()))
+                    if mode == "browser_session" and cookie_header:
+                        h["Cookie"] = cookie_header
+                    if mode == "fresh_session":
+                        with opener.open(urllib.request.Request(config["sample_url"], headers={k:v for k,v in h.items() if k in ("user-agent","accept-language")}), timeout=12) as initial:
+                            initial.read(2000000)
+                    req = urllib.request.Request(url, headers=h)
+                    with opener.open(req, timeout=12) as res:
                         body = res.read(2000001)
                         if len(body)>2000000 or urlsplit(res.geturl()).netloc != sample.netloc:
                             raise ValueError()
                         parser = Seats()
                         parser.feed(body.decode("utf-8",errors="replace"))
                         return res.status, len(body), len(parser.ids), len(parser.ground), len(parser.front), time.monotonic()-t
-                status, size, free, ground, front, elapsed = await asyncio.to_thread(replay)
-                print(f"direct_replay={i} status={status} bytes={size} free={free} ground={ground} front={front} seconds={elapsed:.2f}")
+                for mode in ("headers_only", "browser_session", "fresh_session"):
+                    try:
+                        status, size, free, ground, front, elapsed = await asyncio.to_thread(replay, mode)
+                        print(f"direct_replay={i} mode={mode} status={status} bytes={size} free={free} ground={ground} front={front} seconds={elapsed:.2f}")
+                    except Exception:
+                        print(f"direct_replay={i} mode={mode} failed")
             except Exception:
                 print(f"direct_replay={i} failed")
         print(f"direct_candidates={len(hall_reads)}")
