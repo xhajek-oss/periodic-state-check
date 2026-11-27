@@ -171,6 +171,9 @@ async def main():
                 print(f"global_group={i} " + json.dumps(item, sort_keys=True))
             rows = Counter()
             pairs = set()
+            sectors = Counter()
+            ground_rows = Counter()
+            ground_pairs = set()
             parsed = 0
             for seat in seats:
                 labels = []
@@ -181,15 +184,27 @@ async def main():
                 title = " ".join(labels)
                 row = re.search(r"(?:řad[ayěu]?|row)\s*[:.\-]?\s*(\d+)", title, re.I)
                 number = re.search(r"(?:sedadlo|sedadla|místo|seat)\s*[:.\-]?\s*(\d+)", title, re.I)
+                sector = "unknown"
+                if re.search(r"balk[oó]n|balcony|l[oó]ž|box|přístav", title, re.I):
+                    sector = "excluded"
+                elif re.search(r"přízemí|prizemi|stalls|ground floor", title, re.I):
+                    sector = "ground"
+                sectors[sector] += 1
                 if row:
                     n = int(row.group(1))
                     rows[n] += 1
                     if number:
                         parsed += 1
                         pairs.add((n, int(number.group(1))))
+                        if sector == "ground":
+                            ground_rows[n] += 1
+                            ground_pairs.add((n, int(number.group(1))))
             limit = int(config.get("seats", {}).get("max_row", 5))
             print(f"free_candidates={len(seats)} unique_ids={len({s['id'] for s in seats})} parsed_rows={sum(rows.values())} parsed_seat_pairs={parsed}")
             print(f"front_row_candidates={sum(v for k,v in rows.items() if 1 <= k <= limit)} adjacent_number_pairs={sum(1 for r,n in pairs if 1 <= r <= limit and (r,n+1) in pairs)}")
+            print("sector_counts=" + json.dumps(sectors, sort_keys=True))
+            print("ground_front_row_counts=" + json.dumps({r:ground_rows[r] for r in range(1,limit+1)}))
+            print(f"ground_front_candidates={sum(v for k,v in ground_rows.items() if 1 <= k <= limit)}")
             print("front_row_counts=" + json.dumps({r:rows[r] for r in range(1,limit+1)}))
             for i, group in enumerate(structure, 1):
                 print(f"element_group={i} " + json.dumps(group, sort_keys=True))
