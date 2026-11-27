@@ -14,8 +14,14 @@ class Probe(HTMLParser):
         self.parts = []
         self.anchor = None
         self.attrs = []
+        self.controls = 0
+        self.embedded = 0
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
+        if tag in ("button", "input"):
+            self.controls += 1
+        if tag in ("iframe", "object", "embed"):
+            self.embedded += 1
         self.attrs.extend(k for k, v in attrs)
         if tag == "a":
             self.anchor = [a.get("href") or "", a.get("title") or ""]
@@ -64,6 +70,30 @@ def main():
             if urlsplit(url).scheme == "https" and url not in candidates:
                 candidates.append(url)
         print(f"candidate_links={len(candidates)}")
+        print(f"controls={parser.controls} embedded={parser.embedded}")
+        # Sample same-origin detail-like paths without disclosing their values.
+        from collections import Counter
+        origin = urlsplit(base).netloc
+        groups = {}
+        for href, label in parser.links:
+            u = urljoin(base, href)
+            p = urlsplit(u)
+            if p.scheme != "https" or p.netloc != origin or p.query or p.fragment:
+                continue
+            segments = p.path.strip("/").split("/")
+            if len(segments) < 2 or not label.strip():
+                continue
+            groups.setdefault(tuple(segments[:-1]), set()).add(u)
+        ranked = sorted(groups.values(), key=len, reverse=True)
+        print(f"path_groups={len(ranked)} group_sizes={','.join(str(len(g)) for g in ranked[:8])}")
+        if not candidates and ranked:
+            for i, url in enumerate(sorted(ranked[0])[:2], 1):
+                try:
+                    detail, _, code, seconds = fetch(url)
+                    found = sum(any(w.casefold() in label.casefold() for w in labels) for _, label in detail.links)
+                    print(f"detail_sample={i} status={code} seconds={seconds:.2f} links={len(detail.links)} purchase_labels={found} controls={detail.controls} embedded={detail.embedded}")
+                except Exception:
+                    print(f"detail_sample={i} fetch_failed")
         for i, url in enumerate(candidates[:2], 1):
             try:
                 page, _, code, seconds = fetch(url)
