@@ -15,12 +15,17 @@ class Probe(HTMLParser):
         self.anchor = None
         self.attrs = []
         self.controls = 0
+        self.control_attrs = []
+        self.forms = []
         self.embedded = 0
         self.embed_urls = []
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
         if tag in ("button", "input"):
             self.controls += 1
+            self.control_attrs.append(a)
+        if tag == "form":
+            self.forms.append(a)
         if tag in ("iframe", "object", "embed"):
             self.embedded += 1
             if tag == 'iframe' and a.get('src'):
@@ -74,6 +79,25 @@ def main():
                 candidates.append(url)
         print(f"candidate_links={len(candidates)}")
         print(f"controls={parser.controls} embedded={parser.embedded}")
+        from collections import Counter
+        types = Counter()
+        for a in parser.control_attrs:
+            t = (a.get("type") or "").lower()
+            types[t if t in ("button", "submit", "hidden", "text", "checkbox", "radio") else "other"] += 1
+        for t, n in sorted(types.items()):
+            print(f"control_type={t} count={n}")
+        for label, pattern in (
+            ("data", r"^data-"),
+            ("handler", r"^on"),
+            ("identifier", r"id|event|performance|show"),
+            ("destination", r"url|href|action|target"),
+            ("purchase", r"ticket|buy|booking|sale|reserve"),
+        ):
+            hits = sum(any(re.search(pattern, k, re.I) for k in a) for a in parser.control_attrs)
+            print(f"control_attribute_category={label} count={hits}")
+        print(f"forms={len(parser.forms)} forms_with_action={sum(bool(a.get('action')) for a in parser.forms)}")
+        print(f"controls_with_https_value={sum(any(isinstance(v,str) and 'https://' in v for v in a.values()) for a in parser.control_attrs)}")
+        print(f"controls_with_purchase_value={sum(any(isinstance(v,str) and any(w.casefold() in v.casefold() for w in labels) for v in a.values()) for a in parser.control_attrs)}")
         # Sample same-origin detail-like paths without disclosing their values.
         from collections import Counter
         origin = urlsplit(base).netloc
