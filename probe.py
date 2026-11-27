@@ -152,6 +152,32 @@ def main():
             groups.setdefault(tuple(segments[:-1]), set()).add(u)
         ranked = sorted(groups.values(), key=len, reverse=True)
         print(f"path_groups={len(ranked)} group_sizes={','.join(str(len(g)) for g in ranked[:8])}")
+        sample = urlsplit(config.get("sample_url", ""))
+        booking_origin = sample.netloc
+        matched = 0
+        checked = 0
+        failed = 0
+        booking_targets = set()
+        if ranked:
+            for url in sorted(ranked[0])[:40]:
+                try:
+                    detail, detail_base, code, seconds = fetch(url)
+                    checked += 1
+                    if not any(re.search(r"\b"+re.escape(w)+r"\b", " ".join(detail.parts), re.I) for w in words):
+                        continue
+                    matched += 1
+                    targets = set()
+                    values = [h for h, _ in detail.links] + detail.embed_urls
+                    values += [v for a in detail.control_attrs + detail.forms for v in a.values() if isinstance(v,str)]
+                    for value in values:
+                        u = urlsplit(urljoin(detail_base, value))
+                        if booking_origin and u.scheme == "https" and u.netloc == booking_origin:
+                            targets.add(u.geturl())
+                    booking_targets.update(targets)
+                    print(f"matched_detail={matched} booking_origin_links={len(targets)}")
+                except Exception:
+                    failed += 1
+        print(f"discovery_checked={checked} discovery_failed={failed} discovery_keyword_matches={matched} discovery_unique_booking_targets={len(booking_targets)}")
         if not candidates and ranked:
             for i, url in enumerate(sorted(ranked[0])[:2], 1):
                 try:
