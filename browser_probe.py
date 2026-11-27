@@ -116,9 +116,9 @@ async def main():
             fields = {}
             for seat in seats:
                 title = seat["title"]
-                shape = re.sub(r"\\d+", "N", title)
-                shape = re.sub(r"[^\\W\\d_]+", "W", shape)
-                shape = re.sub(r"[^0W\\s:;,./()|+-]", "?", shape)
+                shape = re.sub(r"\d+", "0", title)
+                shape = re.sub(r"[^\W\d_]+", "W", shape)
+                shape = re.sub(r"[^0W\s:;,./()|+-]", "?", shape)
                 shapes[shape[:120]] += 1
                 for a in seat["attrs"]:
                     fields.setdefault(a["name"], []).append(a["value"])
@@ -149,7 +149,7 @@ async def main():
                     seat_hits += int(bool(re.search(r"sedadl|místo|seat", plain, re.I)))
                     shape = re.sub(r"\d+", "0", plain)
                     shape = re.sub(r"[^\W\d_]+", "W", shape)
-                    shape = re.sub(r"[^NW\s:;,./()|+-]", "?", shape)
+                    shape = re.sub(r"[^0W\s:;,./()|+-]", "?", shape)
                     shapes[shape[:120]] += 1
                 print(f"field_detail={i} row_hints={row_hits} seat_hints={seat_hits}")
                 for shape, count in shapes.most_common(3):
@@ -179,8 +179,8 @@ async def main():
                     parser.feed(unescape(a["value"]))
                     labels.append(" ".join(parser.parts))
                 title = " ".join(labels)
-                row = re.search(r"(?:řad[ayěu]?|row)\\s*[:.\\-]?\\s*(\\d+)", title, re.I)
-                number = re.search(r"(?:sedadlo|sedadla|místo|seat)\\s*[:.\\-]?\\s*(\\d+)", title, re.I)
+                row = re.search(r"(?:řad[ayěu]?|row)\s*[:.\-]?\s*(\d+)", title, re.I)
+                number = re.search(r"(?:sedadlo|sedadla|místo|seat)\s*[:.\-]?\s*(\d+)", title, re.I)
                 if row:
                     n = int(row.group(1))
                     rows[n] += 1
