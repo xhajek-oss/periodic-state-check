@@ -106,8 +106,27 @@ async def main():
                 const nodes = Array.from(document.querySelectorAll('[id][title][class]')).filter(e =>
                     !e.children.length && /free|available|voln/i.test(e.getAttribute('class')) &&
                     !/occupied|reserved|sold|obsazen|prodan|unavailable/i.test(e.getAttribute('class')));
-                return nodes.map(e => ({id:e.id, title:e.title}));
+                return nodes.map(e => ({
+                    id:e.id, title:e.title,
+                    attrs:Array.from(e.attributes).filter(a=>a.name.startsWith('data-')).map(a=>({name:a.name,value:a.value})),
+                    parents:[e.parentElement,e.parentElement?.parentElement].filter(Boolean).map(p=>({id:p.id, title:p.title, numeric:/^\\s*\\d+\\s*$/.test(p.textContent)}))
+                }));
             }""")
+            shapes = Counter()
+            fields = {}
+            for seat in seats:
+                title = seat["title"]
+                shape = re.sub(r"\\d+", "N", title)
+                shape = re.sub(r"[^\\W\\d_]+", "W", shape)
+                shape = re.sub(r"[^NW\\s:;,./()|+-]", "?", shape)
+                shapes[shape[:120]] += 1
+                for a in seat["attrs"]:
+                    fields.setdefault(a["name"], []).append(a["value"])
+            for i, (shape, count) in enumerate(shapes.most_common(8), 1):
+                print(f"title_shape={i} count={count} pattern={json.dumps(shape)}")
+            for i, values in enumerate(fields.values(), 1):
+                print(f"data_field={i} present={len(values)} distinct={len(set(values))} numeric={sum(v.isdecimal() for v in values)} json_like={sum(v.startswith(('{','[')) for v in values)}")
+            print(f"parent_ids={sum(any(p['id'] for p in s['parents']) for s in seats)} parent_titles={sum(any(p['title'] for p in s['parents']) for s in seats)}")
             rows = Counter()
             pairs = set()
             parsed = 0
