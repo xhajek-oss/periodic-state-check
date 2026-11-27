@@ -118,7 +118,7 @@ async def main():
                 title = seat["title"]
                 shape = re.sub(r"\\d+", "N", title)
                 shape = re.sub(r"[^\\W\\d_]+", "W", shape)
-                shape = re.sub(r"[^NW\\s:;,./()|+-]", "?", shape)
+                shape = re.sub(r"[^0W\\s:;,./()|+-]", "?", shape)
                 shapes[shape[:120]] += 1
                 for a in seat["attrs"]:
                     fields.setdefault(a["name"], []).append(a["value"])
@@ -147,7 +147,7 @@ async def main():
                     plain = " ".join(parser.parts)
                     row_hits += int(bool(re.search(r"řad|row", plain, re.I)))
                     seat_hits += int(bool(re.search(r"sedadl|místo|seat", plain, re.I)))
-                    shape = re.sub(r"\d+", "N", plain)
+                    shape = re.sub(r"\d+", "0", plain)
                     shape = re.sub(r"[^\W\d_]+", "W", shape)
                     shape = re.sub(r"[^NW\s:;,./()|+-]", "?", shape)
                     shapes[shape[:120]] += 1
@@ -173,9 +173,14 @@ async def main():
             pairs = set()
             parsed = 0
             for seat in seats:
-                title = seat["title"]
+                labels = []
+                for a in seat["attrs"]:
+                    parser = LabelText()
+                    parser.feed(unescape(a["value"]))
+                    labels.append(" ".join(parser.parts))
+                title = " ".join(labels)
                 row = re.search(r"(?:řad[ayěu]?|row)\\s*[:.\\-]?\\s*(\\d+)", title, re.I)
-                number = re.search(r"(?:sedadlo|místo|seat)\\s*[:.\\-]?\\s*(\\d+)", title, re.I)
+                number = re.search(r"(?:sedadlo|sedadla|místo|seat)\\s*[:.\\-]?\\s*(\\d+)", title, re.I)
                 if row:
                     n = int(row.group(1))
                     rows[n] += 1
