@@ -17,6 +17,8 @@ class Probe(HTMLParser):
         self.controls = 0
         self.control_attrs = []
         self.forms = []
+        self.form_records = []
+        self.active_form = None
         self.embedded = 0
         self.embed_urls = []
     def handle_starttag(self, tag, attrs):
@@ -24,8 +26,12 @@ class Probe(HTMLParser):
         if tag in ("button", "input"):
             self.controls += 1
             self.control_attrs.append(a)
+            if self.active_form is not None:
+                self.active_form['controls'].append(a)
         if tag == "form":
             self.forms.append(a)
+            self.active_form = {'attrs': a, 'controls': [], 'text': []}
+            self.form_records.append(self.active_form)
         if tag in ("iframe", "object", "embed"):
             self.embedded += 1
             if tag == 'iframe' and a.get('src'):
@@ -37,9 +43,13 @@ class Probe(HTMLParser):
             self.scripts += 1
     def handle_data(self, data):
         self.parts.append(data)
+        if self.active_form is not None:
+            self.active_form['text'].append(data)
         if self.anchor is not None:
             self.anchor[1] += " " + data
     def handle_endtag(self, tag):
+        if tag == "form":
+            self.active_form = None
         if tag == "a" and self.anchor is not None:
             self.links.append(self.anchor)
             self.anchor = None
@@ -98,6 +108,35 @@ def main():
         print(f"forms={len(parser.forms)} forms_with_action={sum(bool(a.get('action')) for a in parser.forms)}")
         print(f"controls_with_https_value={sum(any(isinstance(v,str) and 'https://' in v for v in a.values()) for a in parser.control_attrs)}")
         print(f"controls_with_purchase_value={sum(any(isinstance(v,str) and any(w.casefold() in v.casefold() for w in labels) for v in a.values()) for a in parser.control_attrs)}")
+        # Compare form structure and values locally; emit aggregate counts only.
+        actions = set()
+        destinations = set()
+        external_forms = 0
+        keyword_forms = 0
+        purchase_forms = 0
+        field_values = {}
+        for record in parser.form_records:
+            a = record["attrs"]
+            action = urlsplit(urljoin(base, a.get("action") or ""))
+            actions.add((action.netloc, action.path))
+            external_forms += int(action.netloc != urlsplit(base).netloc)
+            values = []
+            for field in record["controls"]:
+                value = field.get("value") or ""
+                name = field.get("name") or ""
+                if name and value:
+                    field_values.setdefault(name, set()).add(value)
+                values.append(value)
+                if value.startswith("https://"):
+                    destinations.add(value)
+            combined = " ".join(record["text"] + values)
+            keyword_forms += int(any(re.search(r"\b"+re.escape(w)+r"\b", combined, re.I) for w in words))
+            purchase_forms += int(any(w.casefold() in combined.casefold() for w in labels))
+        print(f"form_action_paths={len(actions)} form_action_domains={len({x[0] for x in actions})} external_forms={external_forms}")
+        print(f"form_methods_get={sum((a.get('method') or 'get').lower() == 'get' for a in parser.forms)} form_methods_post={sum((a.get('method') or '').lower() == 'post' for a in parser.forms)}")
+        print(f"form_keyword_matches={keyword_forms} form_purchase_matches={purchase_forms}")
+        print(f"unique_field_urls={len(destinations)} field_url_domains={len({urlsplit(u).netloc for u in destinations})} external_field_urls={sum(urlsplit(u).netloc != urlsplit(base).netloc for u in destinations)}")
+        print(f"distinct_field_names={len(field_values)} varying_fields={sum(len(v)>1 for v in field_values.values())} varying_numeric_fields={sum(len(v)>1 and all(x.isdecimal() for x in v) for v in field_values.values())}")
         # Sample same-origin detail-like paths without disclosing their values.
         from collections import Counter
         origin = urlsplit(base).netloc
