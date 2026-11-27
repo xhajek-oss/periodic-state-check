@@ -1,0 +1,22 @@
+name: Browser probe
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install diagnostic dependencies
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install playwright==1.51.0
+          .venv/bin/python -m playwright install chromium
+      - name: Run browser diagnostic
+        env:
+          MONITOR_CONFIG: ${{ secrets.MONITOR_CONFIG }}
+        run: .venv/bin/python browser_probe.py
